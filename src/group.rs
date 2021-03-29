@@ -199,7 +199,13 @@ impl<On, To> FieldGroup<On, To> {
     }
 
     /// Iterates over all the fields in order.
-    pub fn iter<'a>(&'a self, on: &'a On) -> impl Iterator<Item = &'a To> {
+    pub fn iter<'a>(
+        &'a self,
+        on: &'a On,
+    ) -> impl Iterator<Item = &'a To>
+           + core::iter::FusedIterator
+           + core::iter::ExactSizeIterator
+           + core::iter::DoubleEndedIterator {
         let on_ptr = on as *const On;
         self.fields.iter().map(move |field| {
             // Safety: The invariants of the field ensure this is safe, as well as the invariant
@@ -209,7 +215,13 @@ impl<On, To> FieldGroup<On, To> {
     }
 
     /// Iterates over all the fields in order.
-    pub fn iter_mut<'a>(&'a self, on: &'a mut On) -> impl Iterator<Item = &'a mut To> {
+    pub fn iter_mut<'a>(
+        &'a self,
+        on: &'a mut On,
+    ) -> impl Iterator<Item = &'a mut To>
+           + core::iter::FusedIterator
+           + core::iter::ExactSizeIterator
+           + core::iter::DoubleEndedIterator {
         let on_ptr = on as *mut On;
         self.fields.iter().map(move |field| {
             // Safety: The invariants of the field ensure this is safe, as well as the invariant
