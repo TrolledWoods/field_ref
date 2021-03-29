@@ -1,6 +1,8 @@
 use crate::Field;
 use core::mem::MaybeUninit;
 use core::ops::Deref;
+use core::cmp::{Ord, Ordering, PartialOrd};
+use core::hash::{Hash, Hasher};
 
 /// Creates a group of fields. The group will be in the same order as the fields given into the
 /// macro. You can go multiple fields deep if you need to.
@@ -183,6 +185,44 @@ impl<On, To, const N: usize> Deref for ArrayFieldGroup<On, To, N> {
     }
 }
 
+impl<On, To, const N: usize> PartialOrd for ArrayFieldGroup<On, To, N> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.fields.partial_cmp(&other.fields)
+    }
+}
+
+impl<On, To, const N: usize> Ord for ArrayFieldGroup<On, To, N> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.fields.cmp(&other.fields)
+    }
+}
+
+impl<On, To, const N: usize> PartialEq for ArrayFieldGroup<On, To, N> {
+    fn eq(&self, other: &Self) -> bool {
+        self.fields == other.fields
+    }
+}
+
+impl<On, To, const N: usize> Eq for ArrayFieldGroup<On, To, N> {}
+
+impl<On, To, const N: usize> Hash for ArrayFieldGroup<On, To, N> {
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
+        self.fields.hash(state);
+    }
+}
+
+impl<On, To, const N: usize> Clone for ArrayFieldGroup<On, To, N> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<On, To, const N: usize> Copy for ArrayFieldGroup<On, To, N> {}
+
+
 /// A group of non-overlapping fields. Created with the [`group`] function.
 #[repr(transparent)]
 pub struct FieldGroup<On, To> {
@@ -233,3 +273,23 @@ impl<On, To> FieldGroup<On, To> {
         })
     }
 }
+
+impl<On, To> PartialOrd for FieldGroup<On, To> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.fields.partial_cmp(&other.fields)
+    }
+}
+
+impl<On, To> Ord for FieldGroup<On, To> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.fields.cmp(&other.fields)
+    }
+}
+
+impl<On, To> PartialEq for FieldGroup<On, To> {
+    fn eq(&self, other: &Self) -> bool {
+        self.fields == other.fields
+    }
+}
+
+impl<On, To> Eq for FieldGroup<On, To> {}
