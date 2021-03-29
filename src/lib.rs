@@ -1,4 +1,6 @@
 #![no_std]
+#![warn(clippy::all, clippy::pedantic, rust_2018_idioms)]
+#![allow(clippy::module_name_repetitions)]
 
 use core::cmp::{Ord, Ordering, PartialOrd};
 use core::fmt;
@@ -98,7 +100,8 @@ impl<On, To> Field<On, To> {
     ///
     /// # Safety
     /// * When having any reference to a `&On`, the offset added to that pointer has to be a valid `&Field`, including valid alignment.
-    pub unsafe fn from_offset(offset: usize) -> Self {
+    #[must_use]
+    pub const unsafe fn from_offset(offset: usize) -> Self {
         Self {
             offset,
             _phantom: PhantomData,
@@ -152,6 +155,7 @@ impl<On, To> Field<On, To> {
     /// * If there is a valid `To` instance, the memory layout has to guarantee that there is
     /// also a valid `T` instance at that same location. Note that this still allows for `T` to
     /// be a smaller value than `To`, for example, casting from `u64` to `u32` would be fine.
+    #[must_use]
     pub unsafe fn cast<T>(self) -> Field<On, T> {
         Field {
             offset: self.offset,
@@ -171,6 +175,7 @@ impl<On, To> Field<On, To> {
     /// let field = field!(AStruct=>0).join(field!(BStruct=>0));
     /// assert_eq!(field.get(&AStruct(BStruct(42))), &42);
     /// ```
+    #[must_use]
     pub fn join<T>(self, next: Field<To, T>) -> Field<On, T> {
         // Safety:
         // We know 'On' contains a field 'Field' at the offset. We also know that

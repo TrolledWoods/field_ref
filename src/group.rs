@@ -70,6 +70,7 @@ macro_rules! field_group {
 /// assert_eq!(test.b, 42);
 /// assert_eq!(test.c, 42);
 /// ```
+#[must_use]
 pub fn group<On, To>(fields: &[Field<On, To>]) -> Option<&FieldGroup<On, To>> {
     // Check for overlap
     for i in 0..fields.len() {
@@ -117,6 +118,7 @@ pub fn group<On, To>(fields: &[Field<On, To>]) -> Option<&FieldGroup<On, To>> {
 ///     field!(Hi=>0),
 /// ]).is_none());
 /// ```
+#[must_use]
 pub fn array_group<On, To, const N: usize>(
     fields: [Field<On, To>; N],
 ) -> Option<ArrayFieldGroup<On, To, N>> {
@@ -194,6 +196,7 @@ impl<On, To> FieldGroup<On, To> {
     ///
     /// # Safety
     /// * The fields cannot overlap.
+    #[must_use]
     pub unsafe fn from_slice(fields: &[Field<On, To>]) -> &Self {
         &*(fields as *const [Field<On, To>] as *const FieldGroup<On, To>)
     }
