@@ -1,9 +1,29 @@
+use std::cmp::{Ord, Ordering, PartialOrd};
+use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
-/// This creates a [`FieldRef`] to a field of a type. The type cannot implement [`Deref`](core::ops::Deref).
+/// This creates a [`FieldRef`] to a field of a type. The type cannot implement [`Deref`](core::ops::Deref), because deref can run arbitrary
+/// code, which would mean that the method this library uses to reference fields isn't guaranteed to be correct.
+///
+/// # Examples
+/// ```
+/// use field_ref::field_ref;
+///
+/// struct Struct(u32, u32);
+///
+/// let a = field_ref!(Struct, 0);
+/// let b = field_ref!(Struct, 1);
+/// assert_ne!(a, b);
+///
+/// let mut s = Struct(1, 2);
+///
+/// a.set(&mut s, 4);
+/// assert_eq!(s.0, 4);
+/// ```
 #[macro_export]
 macro_rules! field_ref {
-    ($on:ty, $field:ident) => {{
+    ($on:ty, $field:tt) => {{
         // @Speed: This will probably ruin compiletimes a bit
         const _: fn() -> () = || {
             struct Check<T: ?Sized>(T);
@@ -23,16 +43,13 @@ macro_rules! field_ref {
 
 /// A very lightweight reference to a struct field.
 ///
-/// It's lightweight because it is represented just by an offset of bytes.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// It's guaranteed to be the exact same representation as a [`usize`]
+#[repr(C)]
 pub struct FieldRef<On, Field> {
     // Invariant: This has to be a valid offset from the start of an 'On' struct that produces the
     // field. It's in bytes.
     offset: usize,
-
-    // @Cleanup: This might be bad, since this will get variances from the generic parameters.
-    _on: PhantomData<On>,
-    _field: PhantomData<Field>,
+    _phantom: PhantomData<(On, Field)>,
 }
 
 impl<On, Field> FieldRef<On, Field> {
@@ -44,7 +61,7 @@ impl<On, Field> FieldRef<On, Field> {
     ///
     /// # Safety
     /// * The offset between field and on has to be valid to pass to `from_offset`
-    unsafe fn from_pointers(on: *const On, field: *const Field) -> Self {
+    pub unsafe fn from_pointers(on: *const On, field: *const Field) -> Self {
         assert_eq!(
             (field as usize - on as usize) % std::mem::align_of::<Field>(),
             0,
@@ -61,8 +78,7 @@ impl<On, Field> FieldRef<On, Field> {
     pub unsafe fn from_offset(offset: usize) -> Self {
         Self {
             offset,
-            _on: PhantomData,
-            _field: PhantomData,
+            _phantom: PhantomData,
         }
     }
 
@@ -106,7 +122,28 @@ impl<On, Field> FieldRef<On, Field> {
         }
     }
 
-    /// Joins fields, i.e. takes a field of a field
+    /// Sets the value of a field
+    pub fn set(self, on: &mut On, new: Field) {
+        *self.get_mut(on) = new;
+    }
+
+    /// Replaces the value of a field, and returns the old value
+    pub fn replace(self, on: &mut On, new: Field) -> Field {
+        std::mem::replace(self.get_mut(on), new)
+    }
+
+    /// Joins fields, i.e. takes a field of a field.
+    ///
+    /// # Examples
+    /// ```
+    /// use field_ref::field_ref;
+    ///
+    /// struct BStruct(u32);
+    /// struct AStruct(BStruct);
+    ///
+    /// let field = field_ref!(AStruct, 0).join(field_ref!(BStruct, 0));
+    /// assert_eq!(field.get(&AStruct(BStruct(42))), &42);
+    /// ```
     pub fn join<T>(self, next: FieldRef<Field, T>) -> FieldRef<On, T> {
         // Safety:
         // We know 'On' contains a field 'Field' at the offset. We also know that
@@ -116,9 +153,70 @@ impl<On, Field> FieldRef<On, Field> {
     }
 }
 
+impl<On, Field> PartialOrd for FieldRef<On, Field> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.offset.partial_cmp(&other.offset)
+    }
+}
+
+impl<On, Field> Ord for FieldRef<On, Field> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.offset.cmp(&other.offset)
+    }
+}
+
+impl<On, Field> PartialEq for FieldRef<On, Field> {
+    fn eq(&self, other: &Self) -> bool {
+        self.offset == other.offset
+    }
+}
+
+impl<On, Field> Eq for FieldRef<On, Field> {}
+
+impl<On, Field> Hash for FieldRef<On, Field> {
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
+        self.offset.hash(state);
+    }
+}
+
+impl<On, Field> Clone for FieldRef<On, Field> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<On, Field> Copy for FieldRef<On, Field> {}
+
+impl<On, Field> fmt::Debug for FieldRef<On, Field> {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(fmt, "FieldRef({})", self.offset)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic]
+    fn create_fields_unaligned() {
+        #[repr(packed)]
+        struct MyStruct {
+            a: u8,
+            b: u32,
+        }
+
+        let a_field = field_ref!(MyStruct, a);
+        let b_field = field_ref!(MyStruct, b);
+
+        let s = MyStruct { a: 1, b: 2 };
+
+        assert_eq!(*a_field.get(&s), 1);
+        assert_eq!(*b_field.get(&s), 2);
+    }
 
     #[test]
     fn create_fields() {
@@ -127,8 +225,8 @@ mod tests {
             b: u32,
         }
 
-        let a_field: FieldRef<MyStruct, u8> = field_ref!(MyStruct, a);
-        let b_field: FieldRef<MyStruct, u32> = field_ref!(MyStruct, b);
+        let a_field = field_ref!(MyStruct, a);
+        let b_field = field_ref!(MyStruct, b);
 
         let s = MyStruct { a: 1, b: 2 };
 
