@@ -4,7 +4,9 @@ use core::cmp::{Ord, Ordering, PartialOrd};
 use core::fmt;
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
-use core::mem::MaybeUninit;
+
+mod group;
+pub use group::{array_group, group, ArrayFieldGroup, FieldGroup};
 
 /// This creates a [`FieldRef`] to a field of a type. The type cannot implement [`Deref`](core::ops::Deref), because deref can run arbitrary
 /// code, which would mean that the method this library uses to reference fields isn't guaranteed to be correct.
@@ -42,126 +44,6 @@ macro_rules! field_ref {
         let temp = core::mem::MaybeUninit::<$on>::uninit();
         unsafe { $crate::FieldRef::from_pointers(temp.as_ptr(), core::ptr::addr_of!((*temp.as_ptr()).$field)) }
     }};
-}
-
-/// A group of non-overlapping fields. Created with the [`group`] function.
-pub struct FieldGroup<On, Field, const N: usize> {
-    // Invariants:
-    // * The fields cannot overlap
-    fields: [FieldRef<On, Field>; N],
-}
-
-impl<On, Field, const N: usize> FieldGroup<On, Field, N> {
-    /// Iterates over all the fields in order.
-    pub fn iter<'a>(&'a self, on: &'a On) -> impl Iterator<Item = &'a Field> {
-        let on_ptr = on as *const On;
-        self.fields.iter().enumerate().map(move |(i, field)| {
-            // Safety: The invariants of the field ensure this is safe, as well as the invariant
-            // that the fields cannot overlap.
-            unsafe { &*on_ptr.cast::<u8>().add(field.offset).cast::<Field>() }
-        })
-    }
-
-    /// Iterates over all the fields in order.
-    pub fn iter_mut<'a>(&'a self, on: &'a mut On) -> impl Iterator<Item = &'a mut Field> {
-        let on_ptr = on as *mut On;
-        self.fields.iter().enumerate().map(move |(i, field)| {
-            // Safety: The invariants of the field ensure this is safe, as well as the invariant
-            // that the fields cannot overlap.
-            unsafe { &mut *on_ptr.cast::<u8>().add(field.offset).cast::<Field>() }
-        })
-    }
-
-    /// Reads all the fields in the group from a value. The returned fields are in the same order
-    /// as given to the [`group`] function.
-    pub fn get<'a>(&self, on: &'a On) -> [&'a Field; N] {
-        let mut temp = MaybeUninit::<[&Field; N]>::uninit();
-
-        let on_ptr = on as *const On;
-        let field_ptr = temp.as_mut_ptr().cast::<&Field>();
-        for (i, field) in self.fields.iter().enumerate() {
-            // Safety: The invariants of the field ensure this is safe
-            unsafe {
-                field_ptr
-                    .add(i)
-                    .write(&*on_ptr.cast::<u8>().add(field.offset).cast::<Field>());
-            }
-        }
-
-        // Safety: We wrote to all the indices in the array in the loop
-        unsafe { temp.assume_init() }
-    }
-
-    /// Reads all the fields in the group from a value. The returned fields are in the same order
-    /// as given to the [`group`] function.
-    pub fn get_mut<'a>(&self, on: &'a mut On) -> [&'a mut Field; N] {
-        let mut temp = MaybeUninit::<[&mut Field; N]>::uninit();
-
-        let on_ptr = on as *mut On;
-        let field_ptr = temp.as_mut_ptr().cast::<&mut Field>();
-        for (i, field) in self.fields.iter().enumerate() {
-            // Safety: The invariants of the field ensure this is safe, as well as the invariant
-            // that the fields cannot overlap.
-            unsafe {
-                field_ptr
-                    .add(i)
-                    .write(&mut *on_ptr.cast::<u8>().add(field.offset).cast::<Field>());
-            }
-        }
-
-        // Safety: We wrote to all the indices in the array in the loop
-        unsafe { temp.assume_init() }
-    }
-}
-
-/// Tries to create a [`FieldGroup`] with all the given fields. Returns [`None`] if there are overlapping
-/// fields.
-///
-/// # Examples
-/// ```
-/// use field_ref::{field_ref, group};
-///
-/// struct Testing {
-///     a: u32,
-///     b: u32,
-///     c: u32,
-/// }
-///
-/// let mut test = Testing {
-///     a: 0,
-///     b: 0,
-///     c: 0,
-/// };
-///
-/// let fields = group([
-///     field_ref!(Testing, a),
-///     field_ref!(Testing, b),
-///     field_ref!(Testing, c),
-/// ]).unwrap();
-///
-/// let [a, b, c] = fields.get_mut(&mut test);
-/// *a = 42;
-/// *b = 30;
-/// *c = 10;
-///
-/// assert_eq!(test.a, 42);
-/// assert_eq!(test.b, 30);
-/// assert_eq!(test.c, 10);
-/// ```
-pub fn group<On, Field, const N: usize>(
-    fields: [FieldRef<On, Field>; N],
-) -> Option<FieldGroup<On, Field, N>> {
-    // Check for overlap
-    for i in 0..fields.len() {
-        for j in i + 1..fields.len() {
-            if fields[i] == fields[j] {
-                return None;
-            }
-        }
-    }
-
-    // Since there was no overlap, the invariant is fulfilled
-    Some(FieldGroup { fields })
 }
 
 /// A very lightweight reference to a struct field.
@@ -259,7 +141,21 @@ impl<On, Field> FieldRef<On, Field> {
         core::mem::replace(self.get_mut(on), new)
     }
 
-    /// Joins fields, i.e. takes a field of a field.
+    /// Reintreprets this field as another type. More controlled than transmuting the
+    /// entire [`FieldRef`] struct, because it only changes one generic parameter.
+    ///
+    /// # Safety
+    /// * If there is a valid `Field` instance, the memory layout has to guarantee that there is
+    /// also a valid `To` instance at that same location. Note that this still allows for `To` to
+    /// be a smaller value than `Field`, for example, casting from `u64` to `u32` would be fine.
+    pub unsafe fn cast<To>(self) -> FieldRef<On, To> {
+        FieldRef {
+            offset: self.offset,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Takes a field of a field
     ///
     /// # Examples
     /// ```
@@ -335,6 +231,13 @@ impl<On, Field> fmt::Debug for FieldRef<On, Field> {
 mod tests {
     use super::*;
 
+    struct Testing {
+        a: u32,
+        d: u64,
+        b: u32,
+        c: u64,
+    }
+
     #[test]
     #[should_panic]
     fn create_fields_unaligned() {
@@ -355,17 +258,46 @@ mod tests {
 
     #[test]
     fn create_fields() {
-        struct MyStruct {
-            a: u8,
-            b: u32,
-        }
+        let a_field = field_ref!(Testing, a);
+        let b_field = field_ref!(Testing, b);
 
-        let a_field = field_ref!(MyStruct, a);
-        let b_field = field_ref!(MyStruct, b);
-
-        let s = MyStruct { a: 1, b: 2 };
+        let s = Testing {
+            a: 1,
+            b: 2,
+            c: 99,
+            d: 249,
+        };
 
         assert_eq!(*a_field.get(&s), 1);
         assert_eq!(*b_field.get(&s), 2);
+    }
+
+    #[test]
+    fn use_groups() {
+        let mut testing = Testing {
+            a: 0,
+            b: 1,
+            c: 2,
+            d: 3,
+        };
+
+        let field_group = field_group!(Testing, a, b);
+
+        let [a, b] = field_group.get_mut(&mut testing);
+        *a = 42;
+        *b = 30;
+
+        assert_eq!(testing.a, 42);
+        assert_eq!(testing.b, 30);
+
+        for element in field_group.iter_mut(&mut testing) {
+            *element = 2;
+        }
+
+        assert_eq!(testing.a, 2);
+        assert_eq!(testing.b, 2);
+
+        assert!(array_group([field_ref!(Testing, c), field_ref!(Testing, c),]).is_none());
+        assert!(group(&[field_ref!(Testing, c), field_ref!(Testing, c),]).is_none());
     }
 }
