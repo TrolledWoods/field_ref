@@ -108,6 +108,12 @@ impl<On, To> Field<On, To> {
         }
     }
 
+    /// The offset in bytes the field is from the base of the struct.
+    #[must_use]
+    pub const fn offset(self) -> usize {
+        self.offset
+    }
+
     /// Offsets a raw pointer to the field.
     ///
     /// # Safety
