@@ -21,7 +21,7 @@ pub trait AmbiguousIfDeferIsImpl<A> {
 impl<T: ?Sized> AmbiguousIfDeferIsImpl<()> for *const T {}
 impl<T: ?Sized + core::ops::Deref> AmbiguousIfDeferIsImpl<u8> for *const T {}
 
-/// This creates a [`FieldRef`] to a field of a type. The type cannot implement [`Deref`](core::ops::Deref), because deref can run arbitrary
+/// This creates a [`Field`] to a field of a type. The type cannot implement [`Deref`](core::ops::Deref), because deref can run arbitrary
 /// code, which would mean that the method this library uses to reference fields isn't guaranteed to be correct.
 ///
 /// It also supports fields of fields.
@@ -55,7 +55,7 @@ macro_rules! field {
                 let addr = core::ptr::addr_of!((*addr).$fields);
             )*
             // Because none of the types in the chain implements deref this is safe to do!
-            $crate::FieldRef::from_pointers(ptr, addr)
+            $crate::Field::from_pointers(ptr, addr)
         }
     }};
 }
@@ -64,7 +64,7 @@ macro_rules! field {
 ///
 /// It's guaranteed to be the exact same representation as a [`usize`]
 #[repr(C)]
-pub struct FieldRef<On, Field> {
+pub struct Field<On, To> {
     // Invariants:
     // * This has to be a valid offset from the start of an 'On' struct that produces the
     // field. It's in bytes.
@@ -72,11 +72,11 @@ pub struct FieldRef<On, Field> {
     // theoretically possible, as I think it's more useful to be able to partially borrow the
     // types.
     offset: usize,
-    _phantom: PhantomData<(On, Field)>,
+    _phantom: PhantomData<(On, To)>,
 }
 
-impl<On, Field> FieldRef<On, Field> {
-    /// Creates a [`FieldRef`] from two pointers. Have a look at the [`field`] macro if you
+impl<On, To> Field<On, To> {
+    /// Creates a [`Field`] from two pointers. Have a look at the [`field`] macro if you
     /// want a safe way to create this struct.
     ///
     /// # Panics
@@ -84,16 +84,16 @@ impl<On, Field> FieldRef<On, Field> {
     ///
     /// # Safety
     /// * The offset between field and on has to be valid to pass to `from_offset`
-    pub unsafe fn from_pointers(on: *const On, field: *const Field) -> Self {
+    pub unsafe fn from_pointers(on: *const On, field: *const To) -> Self {
         assert_eq!(
-            (field as usize - on as usize) % core::mem::align_of::<Field>(),
+            (field as usize - on as usize) % core::mem::align_of::<To>(),
             0,
-            "Cannot create a 'FieldRef' to an unaligned field"
+            "Cannot create a 'Field' to an unaligned field"
         );
         Self::from_offset(field as usize - on as usize)
     }
 
-    /// Creates a [`FieldRef`] from just an offset. Have a look at the [`field`] macro if you
+    /// Creates a [`Field`] from just an offset. Have a look at the [`field`] macro if you
     /// want a safe way to create this struct.
     ///
     /// # Safety
@@ -109,61 +109,51 @@ impl<On, Field> FieldRef<On, Field> {
     ///
     /// # Safety
     /// * There has to be an allocated object at least the size of the `On` type.
-    pub unsafe fn offset_ptr(self, raw: *const On) -> *const Field {
-        raw.cast::<u8>().add(self.offset).cast::<Field>()
+    pub unsafe fn offset_ptr(self, raw: *const On) -> *const To {
+        raw.cast::<u8>().add(self.offset).cast::<To>()
     }
 
     /// Offsets a mutable raw pointer to the field.
     ///
     /// # Safety
     /// * There has to be an allocated object at least the size of the `On` type.
-    pub unsafe fn offset_mut_ptr(self, raw: *mut On) -> *mut Field {
-        raw.cast::<u8>().add(self.offset).cast::<Field>()
+    pub unsafe fn offset_mut_ptr(self, raw: *mut On) -> *mut To {
+        raw.cast::<u8>().add(self.offset).cast::<To>()
     }
 
     /// Reads a field from a type.
-    pub fn get(self, on: &On) -> &Field {
+    pub fn get(self, on: &On) -> &To {
         // Safety
         // * This is safe because of the invariant
-        unsafe {
-            &*(on as *const On)
-                .cast::<u8>()
-                .add(self.offset)
-                .cast::<Field>()
-        }
+        unsafe { &*(on as *const On).cast::<u8>().add(self.offset).cast::<To>() }
     }
 
     /// Reads a field from a type mutably.
-    pub fn get_mut(self, on: &mut On) -> &mut Field {
+    pub fn get_mut(self, on: &mut On) -> &mut To {
         // Safety
         // * This is safe because of the invariant
-        unsafe {
-            &mut *(on as *mut On)
-                .cast::<u8>()
-                .add(self.offset)
-                .cast::<Field>()
-        }
+        unsafe { &mut *(on as *mut On).cast::<u8>().add(self.offset).cast::<To>() }
     }
 
     /// Sets the value of a field
-    pub fn set(self, on: &mut On, new: Field) {
+    pub fn set(self, on: &mut On, new: To) {
         *self.get_mut(on) = new;
     }
 
     /// Replaces the value of a field, and returns the old value
-    pub fn replace(self, on: &mut On, new: Field) -> Field {
+    pub fn replace(self, on: &mut On, new: To) -> To {
         core::mem::replace(self.get_mut(on), new)
     }
 
     /// Reintreprets this field as another type. More controlled than transmuting the
-    /// entire [`FieldRef`] struct, because it only changes one generic parameter.
+    /// entire [`Field`] struct, because it only changes one generic parameter.
     ///
     /// # Safety
-    /// * If there is a valid `Field` instance, the memory layout has to guarantee that there is
-    /// also a valid `To` instance at that same location. Note that this still allows for `To` to
-    /// be a smaller value than `Field`, for example, casting from `u64` to `u32` would be fine.
-    pub unsafe fn cast<To>(self) -> FieldRef<On, To> {
-        FieldRef {
+    /// * If there is a valid `To` instance, the memory layout has to guarantee that there is
+    /// also a valid `T` instance at that same location. Note that this still allows for `T` to
+    /// be a smaller value than `To`, for example, casting from `u64` to `u32` would be fine.
+    pub unsafe fn cast<T>(self) -> Field<On, T> {
+        Field {
             offset: self.offset,
             _phantom: PhantomData,
         }
@@ -181,44 +171,44 @@ impl<On, Field> FieldRef<On, Field> {
     /// let field = field!(AStruct=>0).join(field!(BStruct=>0));
     /// assert_eq!(field.get(&AStruct(BStruct(42))), &42);
     /// ```
-    pub fn join<T>(self, next: FieldRef<Field, T>) -> FieldRef<On, T> {
+    pub fn join<T>(self, next: Field<To, T>) -> Field<On, T> {
         // Safety:
         // We know 'On' contains a field 'Field' at the offset. We also know that
         // nexts offset creates a valid 'T' from a 'Field'. So, we should always get a valid
         // 'T' from an 'On' by putting them together.
-        unsafe { FieldRef::from_offset(self.offset + next.offset) }
+        unsafe { Field::from_offset(self.offset + next.offset) }
     }
 }
 
 /// The field that this returns will just give back the same instance. Might be useful for generic
 /// code.
-impl<T> Default for FieldRef<T, T> {
+impl<T> Default for Field<T, T> {
     fn default() -> Self {
         unsafe { Self::from_offset(0) }
     }
 }
 
-impl<On, Field> PartialOrd for FieldRef<On, Field> {
+impl<On, To> PartialOrd for Field<On, To> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.offset.partial_cmp(&other.offset)
     }
 }
 
-impl<On, Field> Ord for FieldRef<On, Field> {
+impl<On, To> Ord for Field<On, To> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.offset.cmp(&other.offset)
     }
 }
 
-impl<On, Field> PartialEq for FieldRef<On, Field> {
+impl<On, To> PartialEq for Field<On, To> {
     fn eq(&self, other: &Self) -> bool {
         self.offset == other.offset
     }
 }
 
-impl<On, Field> Eq for FieldRef<On, Field> {}
+impl<On, To> Eq for Field<On, To> {}
 
-impl<On, Field> Hash for FieldRef<On, Field> {
+impl<On, To> Hash for Field<On, To> {
     fn hash<H>(&self, state: &mut H)
     where
         H: Hasher,
@@ -227,17 +217,17 @@ impl<On, Field> Hash for FieldRef<On, Field> {
     }
 }
 
-impl<On, Field> Clone for FieldRef<On, Field> {
+impl<On, To> Clone for Field<On, To> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<On, Field> Copy for FieldRef<On, Field> {}
+impl<On, To> Copy for Field<On, To> {}
 
-impl<On, Field> fmt::Debug for FieldRef<On, Field> {
+impl<On, To> fmt::Debug for Field<On, To> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(fmt, "FieldRef({})", self.offset)
+        write!(fmt, "Field({})", self.offset)
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::FieldRef;
+use crate::Field;
 use core::mem::MaybeUninit;
 use core::ops::Deref;
 
@@ -70,7 +70,7 @@ macro_rules! field_group {
 /// assert_eq!(test.b, 42);
 /// assert_eq!(test.c, 42);
 /// ```
-pub fn group<On, Field>(fields: &[FieldRef<On, Field>]) -> Option<&FieldGroup<On, Field>> {
+pub fn group<On, To>(fields: &[Field<On, To>]) -> Option<&FieldGroup<On, To>> {
     // Check for overlap
     for i in 0..fields.len() {
         for j in i + 1..fields.len() {
@@ -117,9 +117,9 @@ pub fn group<On, Field>(fields: &[FieldRef<On, Field>]) -> Option<&FieldGroup<On
 ///     field!(Hi=>0),
 /// ]).is_none());
 /// ```
-pub fn array_group<On, Field, const N: usize>(
-    fields: [FieldRef<On, Field>; N],
-) -> Option<ArrayFieldGroup<On, Field, N>> {
+pub fn array_group<On, To, const N: usize>(
+    fields: [Field<On, To>; N],
+) -> Option<ArrayFieldGroup<On, To, N>> {
     // Check for overlap
     for i in 0..fields.len() {
         for j in i + 1..fields.len() {
@@ -134,21 +134,21 @@ pub fn array_group<On, Field, const N: usize>(
 }
 
 /// A group of non-overlapping fields. Created with the [`array_group`] function.
-pub struct ArrayFieldGroup<On, Field, const N: usize> {
+pub struct ArrayFieldGroup<On, To, const N: usize> {
     // Invariants:
     // * The fields cannot overlap
-    fields: [FieldRef<On, Field>; N],
+    fields: [Field<On, To>; N],
 }
 
-impl<On, Field, const N: usize> ArrayFieldGroup<On, Field, N> {
-    pub fn get<'a>(&self, on: &'a On) -> [&'a Field; N] {
-        let mut temp = MaybeUninit::<[&Field; N]>::uninit();
+impl<On, To, const N: usize> ArrayFieldGroup<On, To, N> {
+    pub fn get<'a>(&self, on: &'a On) -> [&'a To; N] {
+        let mut temp = MaybeUninit::<[&To; N]>::uninit();
 
         let on_ptr = on as *const On;
-        let mut ptr = temp.as_mut_ptr().cast::<&Field>();
+        let mut ptr = temp.as_mut_ptr().cast::<&To>();
         for field in &self.fields {
             unsafe {
-                ptr.write(&*on_ptr.cast::<u8>().add(field.offset).cast::<Field>());
+                ptr.write(&*on_ptr.cast::<u8>().add(field.offset).cast::<To>());
                 ptr = ptr.add(1);
             }
         }
@@ -156,14 +156,14 @@ impl<On, Field, const N: usize> ArrayFieldGroup<On, Field, N> {
         unsafe { temp.assume_init() }
     }
 
-    pub fn get_mut<'a>(&self, on: &'a mut On) -> [&'a mut Field; N] {
-        let mut temp = MaybeUninit::<[&mut Field; N]>::uninit();
+    pub fn get_mut<'a>(&self, on: &'a mut On) -> [&'a mut To; N] {
+        let mut temp = MaybeUninit::<[&mut To; N]>::uninit();
 
         let on_ptr = on as *mut On;
-        let mut ptr = temp.as_mut_ptr().cast::<&mut Field>();
+        let mut ptr = temp.as_mut_ptr().cast::<&mut To>();
         for field in &self.fields {
             unsafe {
-                ptr.write(&mut *on_ptr.cast::<u8>().add(field.offset).cast::<Field>());
+                ptr.write(&mut *on_ptr.cast::<u8>().add(field.offset).cast::<To>());
                 ptr = ptr.add(1);
             }
         }
@@ -172,8 +172,8 @@ impl<On, Field, const N: usize> ArrayFieldGroup<On, Field, N> {
     }
 }
 
-impl<On, Field, const N: usize> Deref for ArrayFieldGroup<On, Field, N> {
-    type Target = FieldGroup<On, Field>;
+impl<On, To, const N: usize> Deref for ArrayFieldGroup<On, To, N> {
+    type Target = FieldGroup<On, To>;
 
     fn deref(&self) -> &Self::Target {
         // Safety: We also have the same invariant
@@ -183,38 +183,38 @@ impl<On, Field, const N: usize> Deref for ArrayFieldGroup<On, Field, N> {
 
 /// A group of non-overlapping fields. Created with the [`group`] function.
 #[repr(transparent)]
-pub struct FieldGroup<On, Field> {
+pub struct FieldGroup<On, To> {
     // Invariants:
     // * The fields cannot overlap
-    fields: [FieldRef<On, Field>],
+    fields: [Field<On, To>],
 }
 
-impl<On, Field> FieldGroup<On, Field> {
+impl<On, To> FieldGroup<On, To> {
     /// Creates a new group from a slice.
     ///
     /// # Safety
     /// * The fields cannot overlap.
-    pub unsafe fn from_slice(fields: &[FieldRef<On, Field>]) -> &Self {
-        &*(fields as *const [FieldRef<On, Field>] as *const FieldGroup<On, Field>)
+    pub unsafe fn from_slice(fields: &[Field<On, To>]) -> &Self {
+        &*(fields as *const [Field<On, To>] as *const FieldGroup<On, To>)
     }
 
     /// Iterates over all the fields in order.
-    pub fn iter<'a>(&'a self, on: &'a On) -> impl Iterator<Item = &'a Field> {
+    pub fn iter<'a>(&'a self, on: &'a On) -> impl Iterator<Item = &'a To> {
         let on_ptr = on as *const On;
         self.fields.iter().map(move |field| {
             // Safety: The invariants of the field ensure this is safe, as well as the invariant
             // that the fields cannot overlap.
-            unsafe { &*on_ptr.cast::<u8>().add(field.offset).cast::<Field>() }
+            unsafe { &*on_ptr.cast::<u8>().add(field.offset).cast::<To>() }
         })
     }
 
     /// Iterates over all the fields in order.
-    pub fn iter_mut<'a>(&'a self, on: &'a mut On) -> impl Iterator<Item = &'a mut Field> {
+    pub fn iter_mut<'a>(&'a self, on: &'a mut On) -> impl Iterator<Item = &'a mut To> {
         let on_ptr = on as *mut On;
         self.fields.iter().map(move |field| {
             // Safety: The invariants of the field ensure this is safe, as well as the invariant
             // that the fields cannot overlap.
-            unsafe { &mut *on_ptr.cast::<u8>().add(field.offset).cast::<Field>() }
+            unsafe { &mut *on_ptr.cast::<u8>().add(field.offset).cast::<To>() }
         })
     }
 }
