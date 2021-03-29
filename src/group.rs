@@ -3,17 +3,17 @@ use core::mem::MaybeUninit;
 use core::ops::Deref;
 
 /// Creates a group of fields. The group will be in the same order as the fields given into the
-/// macro.
+/// macro. You can go multiple fields deep if you need to.
 ///
 /// # Examples
 /// ```
 /// use field_ref::field_group;
 ///
-/// struct Hi(u32, u32, u32);
+/// struct Hi(u32, u32, (u32,));
 ///
-/// let mut hi = Hi(3, 2, 1);
+/// let mut hi = Hi(3, 2, (1,));
 ///
-/// let group = field_group!(Hi=>0, 1, 2);
+/// let group = field_group!(Hi=>0, 1, 2.0);
 /// let [a, b, c] = group.get_mut(&mut hi);
 /// assert_eq!(*a, 3);
 /// *a = 5;
@@ -22,22 +22,14 @@ use core::ops::Deref;
 ///
 /// assert_eq!(hi.0, 5);
 /// assert_eq!(hi.1, 3);
-/// assert_eq!(hi.2, 2);
+/// assert_eq!(hi.2.0, 2);
 /// ```
 #[macro_export]
 macro_rules! field_group {
-    ($type:ty=>$($field:tt),+) => {{
+    ($type:ty=>$($field:tt $(.$more_fields:tt)*),+) => {{
         $crate::array_group([
             $(
-                $crate::field_ref!($type=>$field)
-            ),+
-        ]).expect("Field group has the same field more than once")
-    }};
-
-    ($($field:tt),+) => {{
-        $crate::array_group([
-            $(
-                $crate::field_ref!($field)
+                $crate::field!($type=>$field$(.$more_fields)*)
             ),+
         ]).expect("Field group has the same field more than once")
     }};
@@ -50,7 +42,7 @@ macro_rules! field_group {
 ///
 /// # Examples
 /// ```
-/// use field_ref::{field_ref, group};
+/// use field_ref::{field, group};
 ///
 /// struct Testing {
 ///     a: u32,
@@ -65,9 +57,9 @@ macro_rules! field_group {
 /// };
 ///
 /// let fields = &[
-///     field_ref!(Testing=>a),
-///     field_ref!(Testing=>b),
-///     field_ref!(Testing=>c),
+///     field!(Testing=>a),
+///     field!(Testing=>b),
+///     field!(Testing=>c),
 /// ];
 ///
 /// for field in group(fields).unwrap().iter_mut(&mut test) {
@@ -98,16 +90,16 @@ pub fn group<On, Field>(fields: &[FieldRef<On, Field>]) -> Option<&FieldGroup<On
 ///
 /// # Examples
 /// ```
-/// use field_ref::{field_ref, array_group};
+/// use field_ref::{field, array_group};
 ///
 /// struct Hi(u32, u32, u32);
 ///
 /// let mut hi = Hi(3, 2, 1);
 ///
 /// let group = array_group([
-///     field_ref!(Hi=>0),
-///     field_ref!(Hi=>1),
-///     field_ref!(Hi=>2)
+///     field!(Hi=>0),
+///     field!(Hi=>1),
+///     field!(Hi=>2)
 /// ]).unwrap();
 ///
 /// let [a, b, c] = group.get_mut(&mut hi);
@@ -121,8 +113,8 @@ pub fn group<On, Field>(fields: &[FieldRef<On, Field>]) -> Option<&FieldGroup<On
 /// assert_eq!(hi.2, 2);
 ///
 /// assert!(array_group([
-///     field_ref!(Hi=>0),
-///     field_ref!(Hi=>0),
+///     field!(Hi=>0),
+///     field!(Hi=>0),
 /// ]).is_none());
 /// ```
 pub fn array_group<On, Field, const N: usize>(

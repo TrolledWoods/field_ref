@@ -28,12 +28,12 @@ impl<T: ?Sized + core::ops::Deref> AmbiguousIfDeferIsImpl<u8> for *const T {}
 ///
 /// # Examples
 /// ```
-/// use field_ref::field_ref;
+/// use field_ref::field;
 ///
 /// struct Struct(u32, u32);
 ///
-/// let a = field_ref!(Struct=>0);
-/// let b = field_ref!(Struct=>1);
+/// let a = field!(Struct=>0);
+/// let b = field!(Struct=>1);
 /// assert_ne!(a, b);
 ///
 /// let mut s = Struct(1, 2);
@@ -42,25 +42,9 @@ impl<T: ?Sized + core::ops::Deref> AmbiguousIfDeferIsImpl<u8> for *const T {}
 /// assert_eq!(s.0, 4);
 /// ```
 #[macro_export]
-macro_rules! field_ref {
+macro_rules! field {
     ($on:ty => $field:tt $(.$fields:tt)*) => {{
         let temp = core::mem::MaybeUninit::<$on>::uninit();
-        let ptr = temp.as_ptr();
-        <_ as $crate::AmbiguousIfDeferIsImpl<_>>::some_item(&ptr); // Your type probably implements 'Defer'. It's not allowed to
-
-        unsafe {
-            let addr = core::ptr::addr_of!((*temp.as_ptr()).$field);
-            $(
-                <_ as $crate::AmbiguousIfDeferIsImpl<_>>::some_item(&addr); // Your type probably implements 'Defer'. It's not allowed to
-                let addr = core::ptr::addr_of!((*addr).$fields);
-            )*
-            // Because none of the types in the chain implements deref this is safe to do!
-            $crate::FieldRef::from_pointers(ptr, addr)
-        }
-    }};
-
-    ($field:tt $(.$fields:tt)*) => {{
-        let temp = core::mem::MaybeUninit::uninit();
         let ptr = temp.as_ptr();
         <_ as $crate::AmbiguousIfDeferIsImpl<_>>::some_item(&ptr); // Your type probably implements 'Defer'. It's not allowed to
 
@@ -92,7 +76,7 @@ pub struct FieldRef<On, Field> {
 }
 
 impl<On, Field> FieldRef<On, Field> {
-    /// Creates a [`FieldRef`] from two pointers. Have a look at the [`field_ref`] macro if you
+    /// Creates a [`FieldRef`] from two pointers. Have a look at the [`field`] macro if you
     /// want a safe way to create this struct.
     ///
     /// # Panics
@@ -109,7 +93,7 @@ impl<On, Field> FieldRef<On, Field> {
         Self::from_offset(field as usize - on as usize)
     }
 
-    /// Creates a [`FieldRef`] from just an offset. Have a look at the [`field_ref`] macro if you
+    /// Creates a [`FieldRef`] from just an offset. Have a look at the [`field`] macro if you
     /// want a safe way to create this struct.
     ///
     /// # Safety
@@ -189,12 +173,12 @@ impl<On, Field> FieldRef<On, Field> {
     ///
     /// # Examples
     /// ```
-    /// use field_ref::field_ref;
+    /// use field_ref::field;
     ///
     /// struct BStruct(u32);
     /// struct AStruct(BStruct);
     ///
-    /// let field = field_ref!(AStruct=>0).join(field_ref!(BStruct=>0));
+    /// let field = field!(AStruct=>0).join(field!(BStruct=>0));
     /// assert_eq!(field.get(&AStruct(BStruct(42))), &42);
     /// ```
     pub fn join<T>(self, next: FieldRef<Field, T>) -> FieldRef<On, T> {
@@ -277,8 +261,8 @@ mod tests {
             b: u32,
         }
 
-        let a_field = field_ref!(MyStruct=>a);
-        let b_field = field_ref!(MyStruct=>b);
+        let a_field = field!(MyStruct=>a);
+        let b_field = field!(MyStruct=>b);
 
         let s = MyStruct { a: 1, b: 2 };
 
@@ -288,8 +272,8 @@ mod tests {
 
     #[test]
     fn create_fields() {
-        let a_field = field_ref!(Testing=>a);
-        let b_field = field_ref!(Testing=>b);
+        let a_field = field!(Testing=>a);
+        let b_field = field!(Testing=>b);
 
         let s = Testing {
             a: 1,
@@ -327,7 +311,7 @@ mod tests {
         assert_eq!(testing.a, 2);
         assert_eq!(testing.b, 2);
 
-        assert!(array_group([field_ref!(Testing=>c), field_ref!(Testing=>c),]).is_none());
-        assert!(group(&[field_ref!(Testing=>c), field_ref!(Testing=>c),]).is_none());
+        assert!(array_group([field!(Testing=>c), field!(Testing=>c),]).is_none());
+        assert!(group(&[field!(Testing=>c), field!(Testing=>c),]).is_none());
     }
 }
