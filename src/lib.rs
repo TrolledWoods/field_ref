@@ -8,8 +8,23 @@ use core::marker::PhantomData;
 mod group;
 pub use group::{array_group, group, ArrayFieldGroup, FieldGroup};
 
+// This is a hack! It's not meant to be used by users, and may be removed without warning if a
+// better method to do this appears!
+// It has to be public to be used by the macros. Theoretically it could be embedded in the macros,
+// but I don't want to create a trait and a type for every macro invocation, I want it to be as
+// cheap as possible for better compile times.
+#[doc(hidden)]
+pub trait AmbiguousIfDeferIsImpl<A> {
+    fn some_item(&self) {}
+}
+
+impl<T: ?Sized> AmbiguousIfDeferIsImpl<()> for *const T {}
+impl<T: ?Sized + core::ops::Deref> AmbiguousIfDeferIsImpl<u8> for *const T {}
+
 /// This creates a [`FieldRef`] to a field of a type. The type cannot implement [`Deref`](core::ops::Deref), because deref can run arbitrary
 /// code, which would mean that the method this library uses to reference fields isn't guaranteed to be correct.
+///
+/// It also supports fields of fields.
 ///
 /// # Examples
 /// ```
@@ -17,8 +32,8 @@ pub use group::{array_group, group, ArrayFieldGroup, FieldGroup};
 ///
 /// struct Struct(u32, u32);
 ///
-/// let a = field_ref!(Struct, 0);
-/// let b = field_ref!(Struct, 1);
+/// let a = field_ref!(Struct=>0);
+/// let b = field_ref!(Struct=>1);
 /// assert_ne!(a, b);
 ///
 /// let mut s = Struct(1, 2);
@@ -28,21 +43,36 @@ pub use group::{array_group, group, ArrayFieldGroup, FieldGroup};
 /// ```
 #[macro_export]
 macro_rules! field_ref {
-    ($on:ty, $field:tt) => {{
-        // @Speed: This will probably ruin compiletimes a bit
-        const _: fn() -> () = || {
-            struct Check<T: ?Sized>(T);
-            trait AmbiguousIfImpl<A> { fn some_item() { } }
-
-            impl<T: ?Sized> AmbiguousIfImpl<()> for Check<T> { }
-            impl<T: ?Sized + core::ops::Deref> AmbiguousIfImpl<u8> for Check<T> { }
-
-            <Check::<$on> as AmbiguousIfImpl<_>>::some_item() // Your type probably implements 'Defer'. It's not allowed to
-        };
-
-        // Because the type does not implement Deref this is safe to do!
+    ($on:ty => $field:tt $(.$fields:tt)*) => {{
         let temp = core::mem::MaybeUninit::<$on>::uninit();
-        unsafe { $crate::FieldRef::from_pointers(temp.as_ptr(), core::ptr::addr_of!((*temp.as_ptr()).$field)) }
+        let ptr = temp.as_ptr();
+        <_ as $crate::AmbiguousIfDeferIsImpl<_>>::some_item(&ptr); // Your type probably implements 'Defer'. It's not allowed to
+
+        unsafe {
+            let addr = core::ptr::addr_of!((*temp.as_ptr()).$field);
+            $(
+                <_ as $crate::AmbiguousIfDeferIsImpl<_>>::some_item(&addr); // Your type probably implements 'Defer'. It's not allowed to
+                let addr = core::ptr::addr_of!((*addr).$fields);
+            )*
+            // Because none of the types in the chain implements deref this is safe to do!
+            $crate::FieldRef::from_pointers(ptr, addr)
+        }
+    }};
+
+    ($field:tt $(.$fields:tt)*) => {{
+        let temp = core::mem::MaybeUninit::uninit();
+        let ptr = temp.as_ptr();
+        <_ as $crate::AmbiguousIfDeferIsImpl<_>>::some_item(&ptr); // Your type probably implements 'Defer'. It's not allowed to
+
+        unsafe {
+            let addr = core::ptr::addr_of!((*temp.as_ptr()).$field);
+            $(
+                <_ as $crate::AmbiguousIfDeferIsImpl<_>>::some_item(&addr); // Your type probably implements 'Defer'. It's not allowed to
+                let addr = core::ptr::addr_of!((*addr).$fields);
+            )*
+            // Because none of the types in the chain implements deref this is safe to do!
+            $crate::FieldRef::from_pointers(ptr, addr)
+        }
     }};
 }
 
@@ -164,7 +194,7 @@ impl<On, Field> FieldRef<On, Field> {
     /// struct BStruct(u32);
     /// struct AStruct(BStruct);
     ///
-    /// let field = field_ref!(AStruct, 0).join(field_ref!(BStruct, 0));
+    /// let field = field_ref!(AStruct=>0).join(field_ref!(BStruct=>0));
     /// assert_eq!(field.get(&AStruct(BStruct(42))), &42);
     /// ```
     pub fn join<T>(self, next: FieldRef<Field, T>) -> FieldRef<On, T> {
@@ -247,8 +277,8 @@ mod tests {
             b: u32,
         }
 
-        let a_field = field_ref!(MyStruct, a);
-        let b_field = field_ref!(MyStruct, b);
+        let a_field = field_ref!(MyStruct=>a);
+        let b_field = field_ref!(MyStruct=>b);
 
         let s = MyStruct { a: 1, b: 2 };
 
@@ -258,8 +288,8 @@ mod tests {
 
     #[test]
     fn create_fields() {
-        let a_field = field_ref!(Testing, a);
-        let b_field = field_ref!(Testing, b);
+        let a_field = field_ref!(Testing=>a);
+        let b_field = field_ref!(Testing=>b);
 
         let s = Testing {
             a: 1,
@@ -281,7 +311,7 @@ mod tests {
             d: 3,
         };
 
-        let field_group = field_group!(Testing, a, b);
+        let field_group = field_group!(Testing=>a, b);
 
         let [a, b] = field_group.get_mut(&mut testing);
         *a = 42;
@@ -297,7 +327,7 @@ mod tests {
         assert_eq!(testing.a, 2);
         assert_eq!(testing.b, 2);
 
-        assert!(array_group([field_ref!(Testing, c), field_ref!(Testing, c),]).is_none());
-        assert!(group(&[field_ref!(Testing, c), field_ref!(Testing, c),]).is_none());
+        assert!(array_group([field_ref!(Testing=>c), field_ref!(Testing=>c),]).is_none());
+        assert!(group(&[field_ref!(Testing=>c), field_ref!(Testing=>c),]).is_none());
     }
 }

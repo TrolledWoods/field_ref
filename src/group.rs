@@ -13,7 +13,7 @@ use core::ops::Deref;
 ///
 /// let mut hi = Hi(3, 2, 1);
 ///
-/// let group = field_group!(Hi, 0, 1, 2);
+/// let group = field_group!(Hi=>0, 1, 2);
 /// let [a, b, c] = group.get_mut(&mut hi);
 /// assert_eq!(*a, 3);
 /// *a = 5;
@@ -26,13 +26,21 @@ use core::ops::Deref;
 /// ```
 #[macro_export]
 macro_rules! field_group {
-    ($type:ty, $($field:tt),+) => {{
+    ($type:ty=>$($field:tt),+) => {{
         $crate::array_group([
             $(
-                $crate::field_ref!($type, $field)
+                $crate::field_ref!($type=>$field)
             ),+
         ]).expect("Field group has the same field more than once")
-    }}
+    }};
+
+    ($($field:tt),+) => {{
+        $crate::array_group([
+            $(
+                $crate::field_ref!($field)
+            ),+
+        ]).expect("Field group has the same field more than once")
+    }};
 }
 
 /// Tries to create a [`FieldGroup`] with all the given fields. Returns [`None`] if there are overlapping
@@ -57,9 +65,9 @@ macro_rules! field_group {
 /// };
 ///
 /// let fields = &[
-///     field_ref!(Testing, a),
-///     field_ref!(Testing, b),
-///     field_ref!(Testing, c),
+///     field_ref!(Testing=>a),
+///     field_ref!(Testing=>b),
+///     field_ref!(Testing=>c),
 /// ];
 ///
 /// for field in group(fields).unwrap().iter_mut(&mut test) {
@@ -97,9 +105,9 @@ pub fn group<On, Field>(fields: &[FieldRef<On, Field>]) -> Option<&FieldGroup<On
 /// let mut hi = Hi(3, 2, 1);
 ///
 /// let group = array_group([
-///     field_ref!(Hi, 0),
-///     field_ref!(Hi, 1),
-///     field_ref!(Hi, 2)
+///     field_ref!(Hi=>0),
+///     field_ref!(Hi=>1),
+///     field_ref!(Hi=>2)
 /// ]).unwrap();
 ///
 /// let [a, b, c] = group.get_mut(&mut hi);
@@ -113,8 +121,8 @@ pub fn group<On, Field>(fields: &[FieldRef<On, Field>]) -> Option<&FieldGroup<On
 /// assert_eq!(hi.2, 2);
 ///
 /// assert!(array_group([
-///     field_ref!(Hi, 0),
-///     field_ref!(Hi, 0),
+///     field_ref!(Hi=>0),
+///     field_ref!(Hi=>0),
 /// ]).is_none());
 /// ```
 pub fn array_group<On, Field, const N: usize>(
